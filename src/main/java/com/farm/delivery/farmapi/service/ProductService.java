@@ -150,6 +150,15 @@ public class ProductService {
         logger.info("Product deleted successfully with ID: {}", id);
     }
 
+    @Transactional
+    public UpdateProductImageDto updateProductImage(Long productId, String imageUrl) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new RuntimeException("Product not found"));
+        product.setImageUrl(imageUrl);
+        productRepository.save(product);
+        return new UpdateProductImageDto(imageUrl);
+    }
+
     private void validateProductData(ProductRequestDto productDto) {
         if (productDto.getPrice().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Price must be greater than zero");
@@ -173,6 +182,7 @@ public class ProductService {
                 product.getDescription(),
                 product.getOwner().getId(),
                 product.getOwner().getName(),
-                product.getAvailableQuantity());
+                product.getAvailableQuantity(),
+                product.getImageUrl());
     }
 }
