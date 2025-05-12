@@ -38,11 +38,16 @@ public record UserDTOs() {
             String name,
             String email,
             String username,
-            User.Role role
+            User.Role role,
+            String profileImageUrl
     ) {}
 
     public record AuthResponseDto(
             String token,
             UserResponseDto user
+    ) {}
+
+    public record UpdateProfileImageDto(
+            String profileImageUrl
     ) {}
 }
