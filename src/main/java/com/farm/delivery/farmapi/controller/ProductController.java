@@ -1,10 +1,12 @@
 package com.farm.delivery.farmapi.controller;
 
 import com.farm.delivery.farmapi.dto.ProductDTOs.*;
+import com.farm.delivery.farmapi.service.FileStorageService;
 import com.farm.delivery.farmapi.service.ProductService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -14,9 +16,11 @@ import java.util.List;
 public class ProductController {
 
     private final ProductService productService;
+    private final FileStorageService fileStorageService;
 
-    public ProductController(ProductService productService) {
+    public ProductController(ProductService productService, FileStorageService fileStorageService) {
         this.productService = productService;
+        this.fileStorageService = fileStorageService;
     }
 
     @GetMapping
@@ -68,5 +72,16 @@ public class ProductController {
     public ResponseEntity<?> deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{id}/image")
+    @PreAuthorize("hasAnyRole('FARMER', 'ADMIN')")
+    public ResponseEntity<UpdateProductImageDto> uploadProductImage(
+            @PathVariable Long id,
+            @RequestParam("file") MultipartFile file) {
+        String fileName = fileStorageService.storeFile(file);
+        String imageUrl = "/images/" + fileName;
+        UpdateProductImageDto response = productService.updateProductImage(id, imageUrl);
+        return ResponseEntity.ok(response);
     }
 }
