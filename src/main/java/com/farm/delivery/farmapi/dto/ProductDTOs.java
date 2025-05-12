@@ -16,6 +16,7 @@ public class ProductDTOs {
         private BigDecimal price;
         private String description;
         private Integer availableQuantity;
+        private String imageUrl;
     }
 
     @Data
@@ -29,5 +30,13 @@ public class ProductDTOs {
         private Long ownerId;
         private String ownerName;
         private Integer availableQuantity;
+        private String imageUrl;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class UpdateProductImageDto {
+        private String imageUrl;
     }
 }
