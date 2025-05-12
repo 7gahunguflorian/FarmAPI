@@ -1,11 +1,16 @@
 package com.farm.delivery.farmapi.controller;
 
 import com.farm.delivery.farmapi.dto.UserDTOs.UserResponseDto;
+import com.farm.delivery.farmapi.dto.UserDTOs.UpdateProfileImageDto;
 import com.farm.delivery.farmapi.model.User;
+import com.farm.delivery.farmapi.service.FileStorageService;
 import com.farm.delivery.farmapi.service.UserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -15,9 +20,11 @@ import java.util.List;
 public class UserController {
 
     private final UserService userService;
+    private final FileStorageService fileStorageService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, FileStorageService fileStorageService) {
         this.userService = userService;
+        this.fileStorageService = fileStorageService;
     }
 
     @GetMapping
@@ -55,7 +62,18 @@ public class UserController {
             currentUser.getName(),
             currentUser.getEmail(),
             currentUser.getUsername(),
-            currentUser.getRole()
+            currentUser.getRole(),
+            currentUser.getProfileImageUrl()
         ));
+    }
+
+    @PostMapping("/profile-image")
+    public ResponseEntity<UpdateProfileImageDto> uploadProfileImage(
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        String fileName = fileStorageService.storeFile(file);
+        String imageUrl = "/images/" + fileName;
+        UpdateProfileImageDto response = userService.updateProfileImage(userDetails.getUsername(), imageUrl);
+        return ResponseEntity.ok(response);
     }
 }
