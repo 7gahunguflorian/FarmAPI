@@ -28,6 +28,9 @@ public class Product {
     @Column(length = 1000)
     private String description;
 
+    @Column(name = "image_url")
+    private String imageUrl;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id", nullable = false)
     private User owner;
