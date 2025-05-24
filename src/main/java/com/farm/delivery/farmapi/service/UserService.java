@@ -15,14 +15,22 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 public class UserService {
     private static final Logger logger = LoggerFactory.getLogger(UserService.class);
+    private final Path rootLocation = Paths.get("uploads/profile-images");
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -38,20 +46,34 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.jwtTokenProvider = jwtTokenProvider;
+
+        // Create upload directory if it doesn't exist
+        try {
+            Files.createDirectories(rootLocation);
+        } catch (IOException e) {
+            logger.error("Could not initialize storage", e);
+        }
     }
 
+    // Existing registration method
     public UserResponseDto register(UserRegistrationDto registrationDto) {
+        return registerWithImage(registrationDto, null);
+    }
+
+    // New method for registration with image
+    @Transactional
+    public UserResponseDto registerWithImage(UserRegistrationDto registrationDto, MultipartFile file) {
         logger.debug("Attempting to register user with email: {}", registrationDto.email());
-        
+
         // Check if user exists by email or username
         boolean emailExists = userRepository.existsByEmail(registrationDto.email());
         boolean usernameExists = userRepository.existsByUsername(registrationDto.username());
-        
+
         if (emailExists) {
             logger.warn("Registration failed: Email already in use: {}", registrationDto.email());
             throw new RuntimeException("Email already in use");
         }
-        
+
         if (usernameExists) {
             logger.warn("Registration failed: Username already in use: {}", registrationDto.username());
             throw new RuntimeException("Username already in use");
@@ -68,15 +90,21 @@ public class UserService {
             user.setName(registrationDto.name());
             user.setEmail(registrationDto.email());
             user.setUsername(registrationDto.username());
-            
+
             String encodedPassword = passwordEncoder.encode(registrationDto.password());
             user.setPassword(encodedPassword);
-            
+
             user.setRole(registrationDto.role());
-            
+
+            // Handle profile image if provided
+            if (file != null && !file.isEmpty()) {
+                String imageUrl = storeProfileImage(file);
+                user.setProfileImageUrl(imageUrl);
+            }
+
             User savedUser = userRepository.save(user);
-            logger.info("User saved to database with ID: {}", savedUser.getId());
-            
+            logger.info("User registered successfully with ID: {}", savedUser.getId());
+
             return convertToUserResponseDto(savedUser);
         } catch (Exception e) {
             logger.error("Error during user registration: {}", e.getMessage(), e);
@@ -84,14 +112,30 @@ public class UserService {
         }
     }
 
+    // Helper method to store profile image
+    private String storeProfileImage(MultipartFile file) {
+        try {
+            String filename = UUID.randomUUID() + "_" + file.getOriginalFilename();
+            Path destinationFile = rootLocation.resolve(Paths.get(filename))
+                    .normalize()
+                    .toAbsolutePath();
+
+            Files.copy(file.getInputStream(), destinationFile, StandardCopyOption.REPLACE_EXISTING);
+            return filename; // Return just the filename
+        } catch (IOException e) {
+            logger.error("Failed to store profile image", e);
+            throw new RuntimeException("Failed to store profile image: " + e.getMessage());
+        }
+    }
+
     public AuthResponseDto login(UserLoginDto loginDto) {
         logger.debug("Attempting to login user with username: {}", loginDto.username());
-        
+
         try {
             // First, check if user exists by username
             Optional<User> userOpt = userRepository.findByUsername(loginDto.username());
             logger.debug("User lookup result for username {}: {}", loginDto.username(), userOpt.isPresent());
-            
+
             if (userOpt.isEmpty()) {
                 logger.warn("Login failed: User not found with username: {}", loginDto.username());
                 throw new BadCredentialsException("Invalid username or password");
@@ -153,19 +197,33 @@ public class UserService {
     public UpdateProfileImageDto updateProfileImage(String username, String imageUrl) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
-        user.setProfileImageUrl(imageUrl);
+        
+        // Store just the filename in the database
+        String filename = imageUrl.substring(imageUrl.lastIndexOf("/") + 1);
+        user.setProfileImageUrl(filename);
         userRepository.save(user);
-        return new UpdateProfileImageDto(imageUrl);
+        
+        return new UpdateProfileImageDto(filename);
     }
 
     private UserResponseDto convertToUserResponseDto(User user) {
+        String profileImageUrl = user.getProfileImageUrl();
+        if (profileImageUrl != null && !profileImageUrl.isEmpty()) {
+            // If the URL doesn't start with http, it's a local file
+            if (!profileImageUrl.startsWith("http")) {
+                // Make sure we're using the correct path format
+                if (!profileImageUrl.startsWith("/")) {
+                    profileImageUrl = "/profile-images/" + profileImageUrl;
+                }
+            }
+        }
+        
         return new UserResponseDto(
-            user.getId(),
-            user.getName(),
-            user.getEmail(),
-            user.getUsername(),
-            user.getRole(),
-            user.getProfileImageUrl()
-        );
+                user.getId(),
+                user.getName(),
+                user.getEmail(),
+                user.getUsername(),
+                user.getRole(),
+                profileImageUrl);
     }
 }
