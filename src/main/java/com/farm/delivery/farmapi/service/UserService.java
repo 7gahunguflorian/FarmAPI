@@ -1,6 +1,7 @@
 package com.farm.delivery.farmapi.service;
 
-import com.farm.delivery.farmapi.dto.UserDTOs.*;
+import com.farm.delivery.farmapi.dto.user.*;
+import com.farm.delivery.farmapi.exception.NonAdminAccessException;
 import com.farm.delivery.farmapi.model.User;
 import com.farm.delivery.farmapi.repository.UserRepository;
 import com.farm.delivery.farmapi.security.JwtTokenProvider;
@@ -113,15 +114,40 @@ public class UserService {
     }
 
     // Helper method to store profile image
-    private String storeProfileImage(MultipartFile file) {
+    public String storeProfileImage(MultipartFile file) {
         try {
-            String filename = UUID.randomUUID() + "_" + file.getOriginalFilename();
-            Path destinationFile = rootLocation.resolve(Paths.get(filename))
+            // Validate file
+            if (file.isEmpty()) {
+                throw new RuntimeException("Failed to store empty file");
+            }
+
+            // Validate file type
+            String contentType = file.getContentType();
+            if (contentType == null || !contentType.startsWith("image/")) {
+                throw new RuntimeException("Only image files are allowed");
+            }
+
+            // Create unique filename
+            String originalFilename = file.getOriginalFilename();
+            String extension = originalFilename != null ? 
+                originalFilename.substring(originalFilename.lastIndexOf(".")) : ".jpg";
+            String filename = UUID.randomUUID().toString() + extension;
+
+            // Ensure directory exists
+            Files.createDirectories(rootLocation);
+
+            // Store file
+            Path destinationFile = rootLocation.resolve(filename)
                     .normalize()
                     .toAbsolutePath();
 
+            // Validate path
+            if (!destinationFile.getParent().equals(rootLocation.toAbsolutePath())) {
+                throw new RuntimeException("Cannot store file outside current directory");
+            }
+
             Files.copy(file.getInputStream(), destinationFile, StandardCopyOption.REPLACE_EXISTING);
-            return filename; // Return just the filename
+            return filename;
         } catch (IOException e) {
             logger.error("Failed to store profile image", e);
             throw new RuntimeException("Failed to store profile image: " + e.getMessage());
@@ -141,6 +167,14 @@ public class UserService {
                 throw new BadCredentialsException("Invalid username or password");
             }
 
+            User user = userOpt.get();
+            
+            // Check if the request is from web (has web flag) and user is not admin
+            if (loginDto.isWeb() && user.getRole() != User.Role.ADMIN) {
+                logger.warn("Web access denied for non-admin user: {}", loginDto.username());
+                throw new NonAdminAccessException("Access denied. Please use the mobile app.");
+            }
+
             // Try to authenticate
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginDto.username(), loginDto.password()));
@@ -152,13 +186,13 @@ public class UserService {
             final String token = jwtTokenProvider.generateToken(authentication);
             logger.debug("JWT token generated successfully for user: {}", loginDto.username());
 
-            User user = userRepository.findByUsername(userDetails.getUsername())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-
             return new AuthResponseDto(token, convertToUserResponseDto(user));
         } catch (BadCredentialsException e) {
             logger.warn("Login failed: Invalid credentials for user: {}", loginDto.username());
             throw new BadCredentialsException("Invalid username or password");
+        } catch (NonAdminAccessException e) {
+            logger.warn("Web access denied: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             logger.error("Login failed with unexpected error for user: {}", loginDto.username(), e);
             throw new RuntimeException("Login failed: " + e.getMessage());
@@ -206,15 +240,13 @@ public class UserService {
         return new UpdateProfileImageDto(filename);
     }
 
-    private UserResponseDto convertToUserResponseDto(User user) {
+    public UserResponseDto convertToUserResponseDto(User user) {
         String profileImageUrl = user.getProfileImageUrl();
         if (profileImageUrl != null && !profileImageUrl.isEmpty()) {
             // If the URL doesn't start with http, it's a local file
             if (!profileImageUrl.startsWith("http")) {
-                // Make sure we're using the correct path format
-                if (!profileImageUrl.startsWith("/")) {
-                    profileImageUrl = "/profile-images/" + profileImageUrl;
-                }
+                // Construct the full URL using the server's base URL
+                profileImageUrl = String.format("http://localhost:8180/profile-images/%s", profileImageUrl);
             }
         }
         
@@ -225,5 +257,17 @@ public class UserService {
                 user.getUsername(),
                 user.getRole(),
                 profileImageUrl);
+    }
+
+    @Transactional(readOnly = true)
+    public UserStatsDto getUserStats() {
+        return new UserStatsDto(
+            countByRole(User.Role.FARMER),
+            countByRole(User.Role.CLIENT)
+        );
+    }
+
+    public long countByRole(User.Role role) {
+        return userRepository.countByRole(role);
     }
 }
