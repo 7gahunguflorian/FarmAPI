@@ -1,18 +1,13 @@
 package com.farm.delivery.farmapi.controller;
 
-import com.farm.delivery.farmapi.dto.UserDTOs.UserResponseDto;
-import com.farm.delivery.farmapi.dto.UserDTOs.UpdateProfileImageDto;
+import com.farm.delivery.farmapi.dto.user.*;
 import com.farm.delivery.farmapi.model.User;
-import com.farm.delivery.farmapi.service.FileStorageService;
 import com.farm.delivery.farmapi.service.UserService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/users")
@@ -20,31 +15,39 @@ import java.util.List;
 public class UserController {
 
     private final UserService userService;
-    private final FileStorageService fileStorageService;
 
-    public UserController(UserService userService, FileStorageService fileStorageService) {
+    public UserController(UserService userService) {
         this.userService = userService;
-        this.fileStorageService = fileStorageService;
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<UserResponseDto> getCurrentUser() {
+        return ResponseEntity.ok(userService.convertToUserResponseDto(userService.getCurrentUser()));
     }
 
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<UserResponseDto>> getAllUsers() {
+    public ResponseEntity<?> getAllUsers() {
         return ResponseEntity.ok(userService.getAllUsers());
-    }
-
-    @GetMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN') or @userService.getCurrentUser().getId() == #id")
-    public ResponseEntity<UserResponseDto> getUserById(@PathVariable Long id) {
-        return userService.getUserById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/role/{role}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<UserResponseDto>> getUsersByRole(@PathVariable User.Role role) {
-        return ResponseEntity.ok(userService.getUsersByRole(role));
+    public ResponseEntity<?> getUsersByRole(@PathVariable String role) {
+        try {
+            User.Role userRole = User.Role.valueOf(role.toUpperCase());
+            return ResponseEntity.ok(userService.getUsersByRole(userRole));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid role: " + role);
+        }
+    }
+
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> getUserById(@PathVariable Long id) {
+        return userService.getUserById(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @DeleteMapping("/{id}")
@@ -54,26 +57,22 @@ public class UserController {
         return ResponseEntity.ok().build();
     }
 
-    @GetMapping("/me")
-    public ResponseEntity<UserResponseDto> getCurrentUser() {
-        User currentUser = userService.getCurrentUser();
-        return ResponseEntity.ok(new UserResponseDto(
-            currentUser.getId(),
-            currentUser.getName(),
-            currentUser.getEmail(),
-            currentUser.getUsername(),
-            currentUser.getRole(),
-            currentUser.getProfileImageUrl()
-        ));
+    @PostMapping("/profile-image")
+    public ResponseEntity<?> updateProfileImage(
+            @RequestParam("file") MultipartFile file) {
+        try {
+            String imageUrl = userService.storeProfileImage(file);
+            User currentUser = userService.getCurrentUser();
+            UpdateProfileImageDto response = userService.updateProfileImage(currentUser.getUsername(), imageUrl);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Failed to update profile image: " + e.getMessage());
+        }
     }
 
-    @PostMapping("/profile-image")
-    public ResponseEntity<UpdateProfileImageDto> uploadProfileImage(
-            @RequestParam("file") MultipartFile file,
-            @AuthenticationPrincipal UserDetails userDetails) {
-        String fileName = fileStorageService.storeFile(file);
-        String imageUrl = "/images/" + fileName;
-        UpdateProfileImageDto response = userService.updateProfileImage(userDetails.getUsername(), imageUrl);
-        return ResponseEntity.ok(response);
+    @GetMapping("/stats")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> getUserStats() {
+        return ResponseEntity.ok(userService.getUserStats());
     }
 }
