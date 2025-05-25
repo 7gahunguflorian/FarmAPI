@@ -2,6 +2,9 @@ package com.farm.delivery.farmapi.service;
 
 import com.farm.delivery.farmapi.dto.OrderDTOs.*;
 import com.farm.delivery.farmapi.dto.ProductDTOs.*;
+import com.farm.delivery.farmapi.dto.DashboardStatsDto;
+import com.farm.delivery.farmapi.dto.DeliveryStatsDto;
+import com.farm.delivery.farmapi.dto.PaymentStatsDTO;
 import com.farm.delivery.farmapi.model.DeliveryInfo;
 import com.farm.delivery.farmapi.model.Order;
 import com.farm.delivery.farmapi.model.Product;
@@ -12,12 +15,15 @@ import com.farm.delivery.farmapi.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -59,12 +65,10 @@ public class OrderService {
                 throw new IllegalStateException("Not enough quantity available for product: " + product.getName());
             }
 
-            // Add to both collections to ensure consistency
             productQuantities.put(product, item.getQuantity());
             products.add(product);
             totalPrice = totalPrice.add(product.getPrice().multiply(BigDecimal.valueOf(item.getQuantity())));
 
-            // Update product quantity
             product.setAvailableQuantity(product.getAvailableQuantity() - item.getQuantity());
             productRepository.save(product);
         }
@@ -73,7 +77,6 @@ public class OrderService {
         order.setProductQuantities(productQuantities);
         order.setTotalPrice(totalPrice);
 
-        // Create delivery info
         DeliveryInfo deliveryInfo = new DeliveryInfo();
         deliveryInfo.setOrder(order);
         deliveryInfo.setDeliveryAddress(requestDto.getDeliveryAddress());
@@ -166,8 +169,137 @@ public class OrderService {
         return convertToOrderResponseDto(savedOrder);
     }
 
+    @Transactional(readOnly = true)
+    public DashboardStatsDto getDashboardStats() {
+        long totalOrders = orderRepository.count();
+        long totalSuccessfulDeliveries = orderRepository.countByStatus(Order.OrderStatus.DELIVERED);
+        long totalFarmers = userRepository.countByRole(User.Role.FARMER);
+        long totalClients = userRepository.countByRole(User.Role.CLIENT);
+
+        return new DashboardStatsDto(
+            totalOrders,
+            totalSuccessfulDeliveries,
+            totalFarmers,
+            totalClients
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public Page<OrderResponseDto> getRecentOrders(Pageable pageable) {
+        return orderRepository.findAllByOrderByOrderDateDesc(pageable)
+            .map(this::convertToOrderResponseDto);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DeliveryStatsDto> getDeliveryStats(LocalDate startDate, LocalDate endDate) {
+        validateDateRange(startDate, endDate);
+        List<Order> orders = orderRepository.findByOrderDateBetween(
+            startDate.atStartOfDay(),
+            endDate.atTime(23, 59, 59)
+        );
+        
+        // Group orders by date and count deliveries
+        Map<LocalDate, Integer> deliveriesMap = new HashMap<>();
+        
+        // Initialize all dates in the range to ensure continuous data
+        LocalDate currentDate = startDate;
+        while (!currentDate.isAfter(endDate)) {
+            deliveriesMap.put(currentDate, 0);
+            currentDate = currentDate.plusDays(1);
+        }
+        
+        for (Order order : orders) {
+            if (order.getStatus() == Order.OrderStatus.DELIVERED) {
+                LocalDate deliveryDate = order.getOrderDate().toLocalDate();
+                deliveriesMap.merge(deliveryDate, 1, Integer::sum);
+            }
+        }
+        
+        return deliveriesMap.entrySet().stream()
+            .map(entry -> new DeliveryStatsDto(entry.getKey().toString(), entry.getValue()))
+            .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<PaymentStatsDTO> getPaymentStats(LocalDate startDate, LocalDate endDate) {
+        validateDateRange(startDate, endDate);
+        List<Order> orders = orderRepository.findByOrderDateBetween(
+            startDate.atStartOfDay(),
+            endDate.atTime(23, 59, 59)
+        );
+        
+        // Group orders by date and calculate stats
+        Map<LocalDate, PaymentStatsDTO> statsMap = new HashMap<>();
+        
+        // Initialize all dates in the range to ensure continuous data
+        LocalDate currentDate = startDate;
+        while (!currentDate.isAfter(endDate)) {
+            statsMap.put(currentDate, new PaymentStatsDTO(currentDate.toString(), 0.0, 0.0));
+            currentDate = currentDate.plusDays(1);
+        }
+        
+        for (Order order : orders) {
+            LocalDate orderDate = order.getOrderDate().toLocalDate();
+            PaymentStatsDTO stats = statsMap.get(orderDate);
+            
+            if (stats != null) {
+                if (order.getStatus() == Order.OrderStatus.DELIVERED) {
+                    stats.setIncome(stats.getIncome() + order.getTotalPrice().doubleValue());
+                } else if (order.getStatus() == Order.OrderStatus.CANCELLED) {
+                    stats.setOutgoing(stats.getOutgoing() + order.getTotalPrice().doubleValue());
+                }
+            }
+        }
+        
+        return new ArrayList<>(statsMap.values());
+    }
+
+    private void validateDateRange(LocalDate startDate, LocalDate endDate) {
+        if (startDate == null || endDate == null) {
+            throw new IllegalArgumentException("Start date and end date cannot be null");
+        }
+        if (startDate.isAfter(endDate)) {
+            throw new IllegalArgumentException("Start date cannot be after end date");
+        }
+        if (startDate.isAfter(LocalDate.now())) {
+            throw new IllegalArgumentException("Start date cannot be in the future");
+        }
+    }
+
+    private LocalDate[] getDateRangeFromTimeRange(String timeRange) {
+        String[] parts = timeRange.split(":");
+        String period = parts[0];
+        int value = Integer.parseInt(parts[1]);
+        
+        LocalDate endDate = LocalDate.now();
+        LocalDate startDate;
+        
+        switch (period.toLowerCase()) {
+            case "week":
+                startDate = endDate.minusWeeks(value);
+                break;
+            case "month":
+                startDate = endDate.minusMonths(value);
+                break;
+            case "year":
+                startDate = endDate.minusYears(value);
+                break;
+            default:
+                throw new IllegalArgumentException("Invalid time range period. Must be one of: week, month, year");
+        }
+        
+        return new LocalDate[]{startDate, endDate};
+    }
+
     private OrderResponseDto convertToOrderResponseDto(Order order) {
         OrderResponseDto responseDto = new OrderResponseDto();
+        setBasicOrderInfo(responseDto, order);
+        setProductInfo(responseDto, order);
+        setDeliveryInfo(responseDto, order);
+        return responseDto;
+    }
+
+    private void setBasicOrderInfo(OrderResponseDto responseDto, Order order) {
         responseDto.setId(order.getId());
         responseDto.setClientName(order.getClient().getUsername());
         responseDto.setStatus(order.getStatus());
@@ -176,7 +308,9 @@ public class OrderService {
         responseDto.setStatusUpdateTime(order.getStatusUpdateTime());
         responseDto.setOrderDate(order.getOrderDate());
         responseDto.setTotalPrice(order.getTotalPrice());
+    }
 
+    private void setProductInfo(OrderResponseDto responseDto, Order order) {
         List<OrderProductDto> productDtos = order.getProducts().stream()
                 .map(product -> {
                     OrderProductDto productDto = new OrderProductDto();
@@ -184,10 +318,8 @@ public class OrderService {
                     productDto.setName(product.getName());
                     productDto.setPrice(product.getPrice());
                     
-                    // Get quantity from the map
                     Integer quantity = order.getProductQuantities().get(product);
                     if (quantity == null) {
-                        // If quantity is not found, try to find it by product ID
                         quantity = order.getProductQuantities().entrySet().stream()
                                 .filter(entry -> entry.getKey().getId().equals(product.getId()))
                                 .map(Map.Entry::getValue)
@@ -201,7 +333,9 @@ public class OrderService {
                 })
                 .collect(Collectors.toList());
         responseDto.setProducts(productDtos);
+    }
 
+    private void setDeliveryInfo(OrderResponseDto responseDto, Order order) {
         if (order.getDeliveryInfo() != null) {
             DeliveryInfoDto deliveryInfoDto = new DeliveryInfoDto();
             deliveryInfoDto.setDeliveryAddress(order.getDeliveryInfo().getDeliveryAddress());
@@ -211,7 +345,5 @@ public class OrderService {
             deliveryInfoDto.setStatus(order.getDeliveryInfo().getStatus());
             responseDto.setDeliveryInfo(deliveryInfoDto);
         }
-
-        return responseDto;
     }
 }
