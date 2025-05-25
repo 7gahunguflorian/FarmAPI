@@ -34,6 +34,7 @@ public class JwtTokenProvider {
 
         return Jwts.builder()
                 .setSubject(userPrincipal.getUsername())
+                .claim("role", userPrincipal.getAuthorities().iterator().next().getAuthority())
                 .setIssuedAt(new Date())
                 .setExpiration(expiryDate)
                 .signWith(getSigningKey())
@@ -52,10 +53,24 @@ public class JwtTokenProvider {
 
     public boolean validateToken(String authToken) {
         try {
-            Jwts.parserBuilder()
+            Claims claims = Jwts.parserBuilder()
                 .setSigningKey(getSigningKey())
                 .build()
-                .parseClaimsJws(authToken);
+                .parseClaimsJws(authToken)
+                .getBody();
+
+            // Check if token is expired
+            if (claims.getExpiration().before(new Date())) {
+                logger.error("Token is expired");
+                return false;
+            }
+
+            // Check if token has required claims
+            if (claims.getSubject() == null || claims.get("role") == null) {
+                logger.error("Token is missing required claims");
+                return false;
+            }
+
             return true;
         } catch (SecurityException ex) {
             logger.error("Invalid JWT signature");
