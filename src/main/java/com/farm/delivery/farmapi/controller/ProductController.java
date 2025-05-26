@@ -84,4 +84,10 @@ public class ProductController {
         UpdateProductImageDto response = productService.updateProductImage(id, imageUrl);
         return ResponseEntity.ok(response);
     }
+
+    @GetMapping("/farmer/me")
+    @PreAuthorize("hasRole('FARMER')")
+    public ResponseEntity<List<ProductResponseDto>> getCurrentFarmerProducts() {
+        return ResponseEntity.ok(productService.getCurrentFarmerProducts());
+    }
 }
