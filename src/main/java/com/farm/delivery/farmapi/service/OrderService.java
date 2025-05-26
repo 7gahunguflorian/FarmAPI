@@ -254,6 +254,23 @@ public class OrderService {
         return new ArrayList<>(statsMap.values());
     }
 
+    @Transactional
+    public void deleteOrder(Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Order not found"));
+
+        // Restore product quantities
+        for (Map.Entry<Product, Integer> entry : order.getProductQuantities().entrySet()) {
+            Product product = entry.getKey();
+            Integer quantity = entry.getValue();
+            product.setAvailableQuantity(product.getAvailableQuantity() + quantity);
+            productRepository.save(product);
+        }
+
+        // Delete the order
+        orderRepository.delete(order);
+    }
+
     private void validateDateRange(LocalDate startDate, LocalDate endDate) {
         if (startDate == null || endDate == null) {
             throw new IllegalArgumentException("Start date and end date cannot be null");

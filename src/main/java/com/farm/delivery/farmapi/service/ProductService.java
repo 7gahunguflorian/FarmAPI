@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -157,6 +158,17 @@ public class ProductService {
         product.setImageUrl(imageUrl);
         productRepository.save(product);
         return new UpdateProductImageDto(imageUrl);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductResponseDto> getCurrentFarmerProducts() {
+        User currentUser = userService.getCurrentUser();
+        if (!currentUser.getRole().equals(User.Role.FARMER)) {
+            throw new AccessDeniedException("Only farmers can view their own products");
+        }
+        return productRepository.findByOwner(currentUser).stream()
+                .map(this::convertToProductResponseDto)
+                .collect(Collectors.toList());
     }
 
     private void validateProductData(ProductRequestDto productDto) {
